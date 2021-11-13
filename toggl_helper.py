@@ -20,6 +20,9 @@ def days_ago(days):
     # return datetime.now() - timedelta(days=days)
     return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
 
+def untracked(tasks):
+    return [t for t in tasks if not t['project']]
+
 def unpaid_by_client(task): 
     return [t for t in task if 'Paid by Client' not in t.get('tags')]
 
@@ -58,6 +61,7 @@ def day(s):
     return datetime.strptime(s, '%m-%d-%y')
 
 def get_task_info(tasks):
+    untracked_task_hr = sum_task_time_hours(untracked(tasks))
     due_f_client_hr = sum_task_time_hours(unpaid_by_client(tasks))
     due_t_contractor_hr = sum_task_time_hours(unpaid_to_contractor(tasks))
     users = Counter(t['user'] for t in tasks)
@@ -66,7 +70,17 @@ def get_task_info(tasks):
     last = max([ t['start_est'] for t in tasks ], default=None)
     first = min([ t['start_est'] for t in tasks ], default=None)
     hours = sum_task_time_hours(tasks)
-    return users, clients, tags, first, last, hours, due_f_client_hr, due_t_contractor_hr
+    return {
+        'users':users,
+        'clients':clients,
+        'tags':tags,
+        'first':first,
+        'last':last,
+        'hours':hours,
+        'due_f_client_hr':due_f_client_hr,
+        'due_t_contractor_hr':due_t_contractor_hr,
+        'untracked_task_hr':untracked_task_hr
+    }
 
 def time(t:str):
     return datetime.strptime( t, '%m-%d-%y %H:%M')
@@ -114,33 +128,26 @@ class TogglHelper(object):
         self.clients = {s for s in set(t.get('client') for t in self.tasks) if s}
         self.print_summary()
 
-    def _print_task_summary(self,tasks, start, end):
-        start_str = readable_date(start or self.start)
-        end_str = readable_date(end or self.end)
+    def _print_task_summary(self, tasks, start, end):
+        task_info = get_task_info(tasks)
+        start_str = readable_date(task_info['first'])
+        end_str = readable_date(task_info['last'])
+        untracked_task_hr = task_info['untracked_task_hr']
         print(f'{len(tasks)} tasks since {start_str} to {end_str}')
 
-        print('All', sum_task_time_hours(tasks), 'hours')
+        print('All', color(sum_task_time_hours(tasks),"black"), 'h. Untracked:', color(untracked_task_hr,"red"))
 
         print('----------------------------------')
         for user in self.users:
             user_tasks = [t for t in tasks if t.get('user')==user]
-            unpaid_by_client_user_tasks = unpaid_by_client(user_tasks)
-            unpaid_to_contractor_user_tasks = unpaid_to_contractor(user_tasks)
-            
-            print('All', user, sum_task_time_hours(user_tasks), 'hours')
-            print('Unpaid by Client to', user, sum_task_time_hours(unpaid_by_client_user_tasks), 'hours')
-            print('Unpaid to Contractor', user, sum_task_time_hours(unpaid_to_contractor_user_tasks), 'hours')
-            print()
+            if user_tasks:
+                print(self.abbreviated_str(user, user_tasks))
+
         print('----------------------------------')
         for client in self.clients:
             client_tasks = [t for t in tasks if t.get('client')==client]
-            unpaid_by_client_client_tasks = unpaid_by_client(client_tasks)
-            unpaid_to_contractor_client_tasks = unpaid_to_contractor(client_tasks)
-            
-            print('All', client, sum_task_time_hours(client_tasks), 'hours')
-            print('Unpaid by Client', client, sum_task_time_hours(unpaid_by_client_client_tasks), 'hours')
-            print('Unpaid to Contractor by', client, sum_task_time_hours(unpaid_to_contractor_client_tasks), 'hours')
-            print()
+            if client_tasks:
+                print(self.abbreviated_str(client, client_tasks))
 
 
     def print_summary(self, start=None, end=None):
@@ -151,60 +158,47 @@ class TogglHelper(object):
         self._print_task_summary(tasks, start or self.start, end or self.end)
 
     def abbreviated_str(self, entity, tasks):
-        users, clients, tags, first, last, hours, due_f_client_hr, due_t_contractor_hr = get_task_info(tasks)
-        string = f'{entity}'+\
-            f':{color(readable_date(first),"purple")} TO {color(readable_date(last),"purple")}; '+\
-            f'all {color(hours,"black")}h; '+\
-            f'due: by cli {color(due_f_client_hr,"blue")}h, '+\
+        task_info = get_task_info(tasks)
+        first = task_info['first']
+        last = task_info['last']
+        hours = task_info['hours']
+        due_f_client_hr = task_info['due_f_client_hr']
+        due_t_contractor_hr = task_info['due_t_contractor_hr']
+
+        string = f'{entity[:19]+":":20}'+\
+            f'{color(readable_date(first),"purple"):22} TO {color(readable_date(last),"purple"):22}; '+\
+            f'all {color(hours,"black")+"h":17}; '+\
+            f'due: by cli {color(due_f_client_hr,"blue")+"h":17}, '+\
             f'to con {color(due_t_contractor_hr,"red")}h'
         return string
 
     def print_user_summary(self, user, start=None, end=None):
         tasks = self.get_temp_tasks_for_start_and_end(start, end)
-        # start_str = readable_date(start or self.start)
-        # end_str = readable_date(end or self.end)
 
         user_tasks = self._get_user_subset_of_tasks(user, tasks)
-        # unpaid_by_client_user_tasks = unpaid_by_client(user_tasks)
-        # unpaid_to_contractor_user_tasks = unpaid_to_contractor(user_tasks)
-        print(self.abbreviated_str(user, user_tasks))
-        # print(f'{user} has {len(user_tasks)} tasks since {start_str} to {end_str} for', sum_task_time_hours(user_tasks), 'hours')
-        # print('Unpaid by Client to', user, sum_task_time_hours(unpaid_by_client_user_tasks), 'hours')
-        # print('Unpaid to Contractor', user, sum_task_time_hours(unpaid_to_contractor_user_tasks), 'hours')
+        first_unpaid_task = get_task_info(unpaid_to_contractor(user_tasks))['first']
+        print('   ', self.abbreviated_str(user, user_tasks))
+        print('    First unpaid task:', readable_date(first_unpaid_task))
         print()
 
         for client in self.clients:
             client_tasks = [t for t in user_tasks if t.get('client')==client]
-            print('For', self.abbreviated_str(client, client_tasks))
-            # unpaid_by_client_client_tasks = unpaid_by_client(client_tasks)
-            # unpaid_to_contractor_client_tasks = unpaid_to_contractor(client_tasks)
-            
-            # print('All', client, 'work by', user, sum_task_time_hours(client_tasks), 'hours')
-            # print('Unpaid by Client', client, sum_task_time_hours(unpaid_by_client_client_tasks), 'hours')
-            # print('Unpaid to Contractor by', client, sum_task_time_hours(unpaid_to_contractor_client_tasks), 'hours')
+            if client_tasks: 
+                print('For', self.abbreviated_str(client, client_tasks))
 
     def print_client_summary(self, client, start=None, end=None):
         tasks = self.get_temp_tasks_for_start_and_end(start, end)
-        start_str = readable_date(start or self.start)
-        end_str = readable_date(end or self.end)
 
         client_tasks = self._get_client_subset_of_tasks(client, tasks)
-        unpaid_by_client_client_tasks = unpaid_by_client(client_tasks)
-        unpaid_to_contractor_client_tasks = unpaid_to_contractor(client_tasks)
-        print(f'{client} has {len(client_tasks)} tasks since {start_str} to {end_str} for', sum_task_time_hours(client_tasks), 'hours')
-        print('Unpaid hours by Client', client, sum_task_time_hours(unpaid_by_client_client_tasks), 'hours')
-        print('Unpaid hours to Contractors by', client, sum_task_time_hours(unpaid_to_contractor_client_tasks), 'hours')
-
+        first_unpaid_task = get_task_info(unpaid_by_client(client_tasks))['first']
+        print('  ', self.abbreviated_str(client, client_tasks))
+        print('   First unpaid task:', readable_date(first_unpaid_task))
         print()
+
         for user in self.users:
             user_tasks = [t for t in client_tasks if t.get('user')==user]
-            unpaid_by_client_user_tasks = unpaid_by_client(user_tasks)
-            unpaid_to_contractor_user_tasks = unpaid_to_contractor(user_tasks)
-            
-            print('All', client, 'work by', user, sum_task_time_hours(user_tasks), 'hours')
-            print('Unpaid by Client to', user, sum_task_time_hours(unpaid_by_client_user_tasks), 'hours')
-            print('Unpaid to Contractor', user, sum_task_time_hours(unpaid_to_contractor_user_tasks), 'hours')
-            print()
+            if user_tasks: 
+                print('By', self.abbreviated_str(user, user_tasks))
 
     def _get_all_tasks(self, start=None, end=None):
         """
@@ -231,7 +225,25 @@ class TogglHelper(object):
             new_resp = self.session.get(url, params={**params, 'page':page}, auth=(self.toggl_api_token,'api_token'))
             new_resp_json = new_resp.json()
             tasks += add_est(new_resp_json.get('data', []))
-            
+
+        if start:
+            tz_aware_start = start if start.tzinfo != None else start.astimezone(pytz.timezone("US/Eastern"))
+            tasks = [
+                t
+                for t
+                in tasks
+                if t['start_est'] >= tz_aware_start
+            ]
+
+        if end:
+            tz_aware_end = end if end.tzinfo != None else end.astimezone(pytz.timezone("US/Eastern"))
+            tasks = [
+                t
+                for t
+                in tasks
+                if t['end_est'] <= tz_aware_end
+            ]
+
         return tasks
 
     def update_all_tasks(self, new_start=None, new_end=None):
@@ -334,7 +346,21 @@ class TogglHelper(object):
             task_id_2_tags={t['id']:list(set([*t['tags'],'Paid by Client'])) for t in unpaid_client_tasks}; task_id_2_tags
             self.set_tags_on_tasks(task_id_2_tags, log=True)
 
-    def get_task_descriptions(self, client=None, user=None, project=None, start=None, end=None, remove_paid_by_client=False, remove_paid_to_user=False):
+    def get_task_descriptions(
+        self, 
+        client=None, 
+        user=None, 
+        project=None, 
+        start=None, 
+        end=None, 
+        remove_paid_by_client=False, 
+        remove_paid_to_user=False,
+        hide_client=False,
+        hide_project=False,
+        hide_user=False,
+        hide_count=False,
+        str_action=lambda x: x[:50],
+        ):
         tasks = self.get_temp_tasks_for_start_and_end(start, end)
         if client:  tasks = self._get_client_subset_of_tasks(client, tasks)
         if remove_paid_by_client: tasks = unpaid_by_client(tasks)
@@ -360,20 +386,29 @@ class TogglHelper(object):
                 'tasks': current_data['tasks'] + 1, 
             }
 
+        p_tasks = []
         for t_client, client_tasks in task_descriptions.items():
             for t_user, user_tasks in client_tasks.items():
                 for t_project, project_tasks in user_tasks.items():
                     for t_desc, t_details in project_tasks.items():
-                        print( 
-                            "" if client else t_client.split()[0], 
-                            "" if project else t_project.split()[0],
-                            "" if user else t_user.split()[0],
-                            t_details.get('tasks'),
-                            # 'tasks', 
-                            round(t_details.get('hours'),1),
-                            'hr ##',
-                            t_desc[:50],
-                        )
+                        p_tasks.append({
+                            't_client': '' if client or hide_client else t_client.split()[0],
+                            't_user': '' if user or hide_user else t_user.split()[0],
+                            't_project':'' if project or hide_project else t_project.split()[0],
+                            't_count':'' if hide_count else t_details.get('tasks'),
+                            'time': '('+str(round(t_details.get('hours'),1))+' hr)',
+                            'desc': str_action(t_desc),
+                        })
+        sorted_p_tasks = sorted(p_tasks, key=lambda x: x['desc'], reverse=False)
+        for p_task in sorted_p_tasks:
+            print( 
+                p_task['t_client'],
+                p_task['t_user'],
+                p_task['t_project'],
+                p_task['t_count'],
+                p_task['time'],
+                p_task['desc'],
+            )
 
     def get_temp_tasks_for_start_and_end(self, start, end):
         """ Get tasks for start and end. If both are none, then get default tasks"""
