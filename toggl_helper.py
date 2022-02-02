@@ -82,7 +82,7 @@ def get_task_info(tasks):
         'untracked_task_hr':untracked_task_hr
     }
 
-def time(t:str):
+def get_time(t:str):
     return datetime.strptime( t, '%m-%d-%y %H:%M')
 
 def color(text, color):
@@ -267,6 +267,7 @@ class TogglHelper(object):
                 }
             }
             resp = self.session.put(url, json.dumps(data), auth=(self.toggl_api_token,'api_token'))
+            time.sleep(0.25)
 
             if resp.ok:
                 return resp.json()
